@@ -81,6 +81,15 @@ services:
     networks:
       - iris_backend
       - iris_frontend
+    # Expose the IRIS application through Traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=iris_frontend"
+      - "traefik.http.routers.sirpv2-dev.rule=Host(`iris.localhost`)"
+      - "traefik.http.services.sirpv2-dev.loadbalancer.server.port=8000"
+      - "traefik.http.routers.sirpv2-dev.entrypoints=https"
+      - "traefik.http.routers.sirpv2-dev.tls=true"
+      - "traefik.http.routers.sirpv2-dev.middlewares=https-redirect"
 
   worker:
     build:
@@ -117,31 +126,86 @@ services:
     networks:
       - iris_backend
 
-  nginx:
-    build:
-      context: ./docker/nginx
-      args:
-        NGINX_CONF_GID: 1234
-        NGINX_CONF_FILE: nginx.conf
-    image: iriswebapp_nginx:v2.4.7
-    container_name: iriswebapp_nginx
-    environment:
-      - IRIS_UPSTREAM_SERVER
-      - IRIS_UPSTREAM_PORT
-      - INTERFACE_HTTPS_PORT
-      - SERVER_NAME
-      - CERT_FILENAME
-      - KEY_FILENAME
-      - IRIS_AUTHENTICATION_TYPE
+# Do not expose Iris-Web through Nginx
+#
+#
+#  nginx:
+#    build:
+#      context: ./docker/nginx
+#      args:
+#        NGINX_CONF_GID: 1234
+#        NGINX_CONF_FILE: nginx.conf
+#    image: iriswebapp_nginx:v2.4.7
+#    container_name: iriswebapp_nginx
+#    environment:
+#      - IRIS_UPSTREAM_SERVER
+#      - IRIS_UPSTREAM_PORT
+#      - INTERFACE_HTTPS_PORT
+#      - SERVER_NAME
+#      - CERT_FILENAME
+#      - KEY_FILENAME
+#      - IRIS_AUTHENTICATION_TYPE
+#    networks:
+#      - iris_frontend
+#    ports:
+#      - "${INTERFACE_HTTPS_PORT:-443}:${INTERFACE_HTTPS_PORT:-443}"
+#    volumes:
+#      - "./certificates/web_certificates/:/www/certs/:ro"
+#    restart: always
+#    labels:
+#      - "traefik.enable=true"
+#      - "traefik.docker.network=iris_frontend"
+#      - "traefik.http.routers.sirpv2-dev.rule=Host(`iris.localhost`)"
+#      - "traefik.http.services.sirpv2-dev.loadbalancer.server.port=443"
+#      - "traefik.http.routers.sirpv2-dev.entrypoints=https"
+#      - "traefik.http.routers.sirpv2-dev.tls=true"
+#      - "traefik.http.routers.sirpv2-dev.middlewares=https-redirect"
+#      - "traefik.http.services.sirpv2-dev.loadbalancer.server.scheme=https"
+#    depends_on:
+#      - "app"
+
+  traefik:
+    # Use the latest v2.2.x Traefik image available
+    image: traefik:v2.2
+    ports:
+      # Listen on port 80, default for HTTP, necessary to redirect to HTTPS
+      - 80:80
+      # Listen on port 443, default for HTTPS
+      - 443:443
+      # Listen on port 98000, for insecure dashboard
+      - 9800:8080
+    labels:
+      # Enable Traefik for this service, to make it available in the public network
+      # We removed the Let's Encrypt configuration, label constraints, and everything related to the dashboard exposition
+      - traefik.enable=true
+      # Use the traefik-public network (declared below)
+      - traefik.docker.network=iris_frontend
+      - traefik.http.middlewares.https-redirect.redirectscheme.scheme=https
+      - traefik.http.middlewares.https-redirect.redirectscheme.permanent=true
+
+    volumes:
+      # Add Docker as a mounted volume, so that Traefik can read the labels of other services
+      # We removed the unavailable Traefik certs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    command:
+      # Enable Docker in Traefik, so that it reads labels from Docker services
+      # We removed the label constraints, and the swarm provider to use plain Docker which should make no difference, and the Let's Encrypt configuration.
+      - --providers.docker
+      # Do not expose all Docker services, only the ones explicitly exposed
+      - --providers.docker.exposedbydefault=false
+      # Create an entrypoint "http" listening on port 80
+      - --entrypoints.http.address=:80
+      # Create an entrypoint "https" listening on port 443
+      - --entrypoints.https.address=:443
+      # Enable the Traefik log, for configurations and errors
+      - --log.level=debug
+      # Enable the Dashboard and API
+      - --api.insecure
+      - --serversTransport.insecureSkipVerify=true
+
     networks:
       - iris_frontend
-    ports:
-      - "${INTERFACE_HTTPS_PORT:-443}:${INTERFACE_HTTPS_PORT:-443}"
-    volumes:
-      - "./certificates/web_certificates/:/www/certs/:ro"
-    restart: always
-    depends_on:
-      - "app"
 
 volumes:
   iris-downloads:
